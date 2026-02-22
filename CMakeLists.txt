@@ -364,6 +364,18 @@ if(DDS_BUILD_WASM)
             FAIL_REGULAR_EXPRESSION "FAIL"
         )
     endforeach()
+
+    # ── Example programs as tests ───────────────────────────────────────────
+    set(_wasm_examples_dir "${CMAKE_CURRENT_SOURCE_DIR}/examples/wasm")
+
+    add_test(
+        NAME    wasm_example_analyseplaypbn
+        COMMAND "${_dds_node}" "${_wasm_examples_dir}/AnalysePlayPBN.js"
+    )
+    set_tests_properties(wasm_example_analyseplaypbn PROPERTIES
+        ENVIRONMENT "DDS_WASM_PATH=${CMAKE_BINARY_DIR}/dds.js"
+        FAIL_REGULAR_EXPRESSION "FAIL"
+    )
 endif()
 
 # ============================================================
