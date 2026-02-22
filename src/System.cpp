@@ -234,6 +234,13 @@ void System::GetHardware(
   ncores = sysconf(_SC_NPROCESSORS_ONLN);
   return;
 #endif
+
+#ifdef __EMSCRIPTEN__
+  // WebAssembly: single-threaded, assume 128 MB available for the solver.
+  kilobytesFree = 128 * 1024;
+  ncores = 1;
+  return;
+#endif
 }
 
 

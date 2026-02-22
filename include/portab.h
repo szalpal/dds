@@ -48,6 +48,14 @@
 
   typedef long long __int64;
 
+#elif defined (__EMSCRIPTEN__)
+  #include <unistd.h>
+
+  #define USES_CONSTRUCTOR
+  /* Emscripten supports __attribute__((constructor)) */
+
+  typedef long long __int64;
+
 #endif
 
 #if (! defined DDS_THREADS_WIN32) && \

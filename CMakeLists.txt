@@ -50,6 +50,8 @@ if(NOT DDS_THREADS_BOOST  AND
     elseif(APPLE)
         set(DDS_THREADS_GCD ON)
         set(DDS_THREADS_STL ON)
+    elseif(EMSCRIPTEN)
+        # WebAssembly: single-threaded by default (no backend set)
     else()
         # Linux / other Unix
         set(DDS_THREADS_OPENMP ON)
@@ -141,15 +143,17 @@ set_target_properties(dds PROPERTIES CXX_EXTENSIONS OFF)
 # Link-time optimisation
 # ============================================================
 
-include(CheckIPOSupported)
-check_ipo_supported(RESULT _ipo_supported OUTPUT _ipo_output)
-if(_ipo_supported)
-    set_target_properties(dds PROPERTIES
-        INTERPROCEDURAL_OPTIMIZATION_RELEASE         TRUE
-        INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO  TRUE
-    )
-else()
-    message(STATUS "IPO/LTO not supported: ${_ipo_output}")
+if(NOT EMSCRIPTEN)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _ipo_supported OUTPUT _ipo_output)
+    if(_ipo_supported)
+        set_target_properties(dds PROPERTIES
+            INTERPROCEDURAL_OPTIMIZATION_RELEASE         TRUE
+            INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO  TRUE
+        )
+    else()
+        message(STATUS "IPO/LTO not supported: ${_ipo_output}")
+    endif()
 endif()
 
 # ============================================================
@@ -221,8 +225,8 @@ else()
         )
     endif()
 
-    # Linker hardening for shared libraries on Linux
-    if(UNIX AND NOT APPLE AND BUILD_SHARED_LIBS)
+    # Linker hardening for shared libraries on Linux (not Emscripten)
+    if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN AND BUILD_SHARED_LIBS)
         target_link_options(dds PRIVATE
             -Wl,--sort-common
             -Wl,--as-needed
@@ -285,6 +289,81 @@ endif()
 
 if(DDS_ENABLE_SCHEDULER)
     target_compile_definitions(dds PRIVATE DDS_SCHEDULER)
+endif()
+
+# ============================================================
+# ============================================================
+# WebAssembly module (Emscripten only)
+# ============================================================
+
+option(DDS_BUILD_WASM "Build WebAssembly/JS module (requires Emscripten)" OFF)
+
+if(DDS_BUILD_WASM)
+    if(NOT EMSCRIPTEN)
+        message(FATAL_ERROR "DDS_BUILD_WASM requires the Emscripten toolchain. "
+            "Configure with: emcmake cmake -DDDS_BUILD_WASM=ON ...")
+    endif()
+
+    # All 30 public functions + malloc/free, prefixed with _ as required by Emscripten
+    set(_DDS_WASM_EXPORTS
+        _malloc _free
+        _SetMaxThreads _SetThreading _SetResources _FreeMemory
+        _SolveBoard _SolveBoardPBN
+        _CalcDDtable _CalcDDtablePBN
+        _CalcAllTables _CalcAllTablesPBN
+        _SolveAllBoards _SolveAllBoardsBin
+        _SolveAllChunks _SolveAllChunksBin _SolveAllChunksPBN
+        _Par _CalcPar _CalcParPBN
+        _SidesPar _DealerPar _DealerParBin _SidesParBin
+        _ConvertToDealerTextFormat _ConvertToSidesTextFormat
+        _AnalysePlayBin _AnalysePlayPBN
+        _AnalyseAllPlaysBin _AnalyseAllPlaysPBN
+        _GetDDSInfo _ErrorMessage
+    )
+    list(JOIN _DDS_WASM_EXPORTS "," _DDS_WASM_EXPORTS_STR)
+
+    add_executable(dds_wasm src/wasm_main.cpp)
+    target_link_libraries(dds_wasm PRIVATE dds)
+    set_target_properties(dds_wasm PROPERTIES
+        OUTPUT_NAME "dds"
+        SUFFIX      ".js"
+    )
+    target_link_options(dds_wasm PRIVATE
+        "-sEXPORTED_FUNCTIONS=${_DDS_WASM_EXPORTS_STR}"
+        "-sEXPORTED_RUNTIME_METHODS=cwrap,ccall,getValue,setValue"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sINITIAL_MEMORY=33554432"   # 32 MB initial heap
+        "-sMODULARIZE=1"
+        "-sEXPORT_NAME=createDDS"
+        "-sENVIRONMENT=web,node"
+    )
+
+    # ── CTest integration ──────────────────────────────────────────────────
+    enable_testing()
+
+    # Use the Node.js bundled with emsdk (set by emcmake as the cross-
+    # compiling emulator); fall back to whatever 'node' is on PATH.
+    if(CMAKE_CROSSCOMPILING_EMULATOR)
+        set(_dds_node "${CMAKE_CROSSCOMPILING_EMULATOR}")
+    else()
+        find_program(_dds_node node REQUIRED)
+    endif()
+
+    set(_wasm_test_dir "${CMAKE_CURRENT_SOURCE_DIR}/test/wasm")
+    set(_hands_file    "${CMAKE_CURRENT_SOURCE_DIR}/hands/list10.txt")
+
+    foreach(_test IN ITEMS init error solve table par)
+        add_test(
+            NAME    wasm_${_test}
+            COMMAND "${_dds_node}" "${_wasm_test_dir}/test-${_test}.js"
+        )
+        set_tests_properties(wasm_${_test} PROPERTIES
+            ENVIRONMENT
+                "DDS_WASM_PATH=${CMAKE_BINARY_DIR}/dds.js\
+;DDS_HANDS_PATH=${_hands_file}"
+            FAIL_REGULAR_EXPRESSION "FAIL"
+        )
+    endforeach()
 endif()
 
 # ============================================================
